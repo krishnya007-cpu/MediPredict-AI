@@ -8,6 +8,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 
 APP_DIR  = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ROOT_DIR = os.path.abspath(os.path.join(APP_DIR, ".."))
@@ -15,7 +16,7 @@ sys.path.insert(0, ROOT_DIR); sys.path.insert(0, APP_DIR)
 
 from utils.helpers import (
     load_models, transform_input, validate_input,
-    fmt_inr, usd_to_inr, generate_claim_explanation,
+    fmt_inr, usd_to_inr, generate_claim_explanation,transform_batch,
 )
 
 
@@ -145,10 +146,17 @@ def show(user_input: dict):
         </p>
     """, unsafe_allow_html=True)
 
-    errors = validate_input(user_input)
-    if errors:
-        for e in errors: st.error(f"❌ {e}")
-        return
+    tab_individual, tab_portfolio = st.tabs(
+        [
+            "👤 Individual Prediction",
+            "🏢 Portfolio Analytics"
+        ]
+    )
+    with tab_individual:
+        errors = validate_input(user_input)
+        if errors:
+            for e in errors: st.error(f"❌ {e}")
+            return
 
     # Input summary
     st.markdown("#### 📋 Policyholder Profile")
@@ -321,3 +329,121 @@ def show(user_input: dict):
             mime="text/csv",
             use_container_width=True,
         )
+    with tab_portfolio:
+
+        st.subheader("🏢 Portfolio Claim Analytics")
+
+        st.write(
+            "Upload a CSV containing multiple policyholders "
+            "to estimate the total expected claims for the portfolio."
+        )
+
+        uploaded_file = st.file_uploader(
+            "Upload Portfolio CSV",
+            type=["csv"],
+            key="portfolio_claim_csv"
+        )
+
+        if uploaded_file is not None:
+
+            df_upload = pd.read_csv(uploaded_file)
+
+            st.success(
+                f"Loaded {len(df_upload):,} policyholders."
+            )
+
+            st.dataframe(
+                df_upload.head(),
+                use_container_width=True
+            )
+
+            if st.button(
+                "🚀 Analyse Portfolio",
+                key="portfolio_predict",
+                type="primary",
+            ):
+
+                
+
+                models = load_models()
+
+                encoders = models["encoders"]
+
+                X = transform_batch(
+                    df_upload,
+                    encoders
+                )
+
+                pred = models["claim_model"].predict(X)
+
+                pred = np.maximum(
+                    0,
+                    usd_to_inr(pred)
+                )
+
+                df_upload["Predicted Claim"] = pred
+                # =====================================
+                # Portfolio KPIs
+                # =====================================
+
+                total_claim = df_upload["Predicted Claim"].sum()
+
+                average_claim = df_upload["Predicted Claim"].mean()
+
+                highest_claim = df_upload["Predicted Claim"].max()
+
+                reserve = total_claim * 1.10
+                st.markdown("---")
+
+                st.subheader("📊 Portfolio Dashboard")
+
+                c1, c2, c3, c4, c5 = st.columns(5)
+
+                c1.metric("Policies", len(df_upload))
+                c2.metric("Expected Claims", f"₹{total_claim:,.0f}")
+                c3.metric("Average Claim", f"₹{average_claim:,.0f}")
+                c4.metric("Highest Claim", f"₹{highest_claim:,.0f}")
+                c5.metric("Reserve", f"₹{reserve:,.0f}")
+                st.markdown("---")
+
+                st.subheader("🔝 Highest Expected Claims")
+
+                top10 = (
+                    df_upload
+                    .sort_values(
+                        "Predicted Claim",
+                        ascending=False
+                    )
+                    .head(10)
+                )
+
+                st.dataframe(
+                    top10,
+                    use_container_width=True
+                )
+                # =====================================
+                # Claim Distribution Histogram
+                # =====================================
+
+                st.markdown("---")
+
+                st.subheader("📊 Claim Distribution")
+
+                fig = px.histogram(
+                    df_upload,
+                    x="Predicted Claim",
+                    nbins=20,
+                    title="Distribution of Predicted Claims",
+                    color_discrete_sequence=["#3B82F6"],
+                )
+
+                fig.update_layout(
+                    xaxis_title="Predicted Claim (₹)",
+                    yaxis_title="Number of Policyholders",
+                    template="plotly_white",
+                )
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )

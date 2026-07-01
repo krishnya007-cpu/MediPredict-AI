@@ -222,9 +222,14 @@ def fmt_inr_plain(value: float) -> str:
     return f"₹{int(value):,}"
 
 
-def usd_to_inr(usd: float) -> float:
-    """Convert USD amount to INR."""
-    return float(usd) * USD_TO_INR
+import numpy as np
+
+def usd_to_inr(usd):
+    """
+    Convert USD to INR.
+    Works for both single values and NumPy arrays.
+    """
+    return np.asarray(usd) * USD_TO_INR
 
 
 def fmt_percent(p: float) -> str:
@@ -403,39 +408,114 @@ def generate_risk_explanation(ui: dict, risk_label: str) -> dict:
 
 
 def generate_premium_explanation(ui: dict, premium_inr: float) -> dict:
-    """Explain why the predicted premium is at this level."""
-    reasons = []
+    """Generate premium explanation and personalised recommendations."""
 
+    reasons = []
+    recommendations = []
+
+    # ---------------- Age ----------------
     if ui["age"] > 50:
         reasons.append(f"Age {ui['age']} — premiums rise significantly after 50")
+        recommendations.append("Maintain regular preventive health check-ups.")
     elif ui["age"] > 35:
         reasons.append(f"Age {ui['age']} — moderate age loading applied")
 
+    # ---------------- Smoking ----------------
     if ui["smoker"] == "Yes":
         reasons.append("Smoker surcharge — typically +40% to +60%")
+        recommendations.append(
+            "Quitting smoking can significantly reduce future premiums."
+        )
+    else:
+        recommendations.append(
+            "Continue your non-smoking lifestyle to keep premiums lower."
+        )
+
+    # ---------------- Chronic Disease ----------------
     if ui["chronic_disease"]:
         reasons.append("Chronic disease loading — higher medical costs")
-    if ui["bmi"] > 30:
-        reasons.append(f"High BMI ({ui['bmi']:.1f}) — obesity cost loading")
-    if ui["num_prev_claims"] > 2:
-        reasons.append(f"{ui['num_prev_claims']} previous claims — history surcharge")
-    if ui["coverage_type"] in ["Premium", "Comprehensive"]:
-        reasons.append(f"{ui['coverage_type']} coverage — broader protection costs more")
-    if ui["prev_hospitalizations"] > 1:
-        reasons.append(f"{ui['prev_hospitalizations']} hospitalisations — utilisation loading")
+        recommendations.append(
+            "Follow your treatment plan and schedule regular medical reviews."
+        )
+    else:
+        recommendations.append(
+            "Maintain your current healthy medical profile."
+        )
 
+    # ---------------- BMI ----------------
+    bmi = ui["bmi"]
+
+    if bmi > 30:
+        reasons.append(f"High BMI ({bmi:.1f}) — obesity cost loading")
+        recommendations.append(
+            "Weight management may help reduce future insurance costs."
+        )
+
+    elif bmi < 18.5:
+        recommendations.append(
+            "Maintain a balanced diet to achieve a healthy BMI."
+        )
+
+    else:
+        recommendations.append(
+            "Maintain your healthy BMI."
+        )
+
+    # ---------------- Exercise ----------------
+    ex = ui["exercise_frequency"]
+
+    if isinstance(ex, str):
+        exercise_score = {
+            "Never": 0,
+            "Rarely": 1,
+            "Sometimes": 3,
+            "Often": 5,
+            "Daily": 7,
+        }.get(ex, 0)
+    else:
+        exercise_score = ex
+
+    if exercise_score < 3:
+        recommendations.append(
+            "Increasing exercise to at least 3–4 days/week may improve your risk profile."
+        )
+    else:
+        recommendations.append(
+            "Continue your regular exercise routine."
+        )
+
+    # ---------------- Claims ----------------
+    if ui["num_prev_claims"] > 2:
+        reasons.append(
+            f"{ui['num_prev_claims']} previous claims — history surcharge"
+        )
+        recommendations.append(
+            "Reducing unnecessary claims can improve future premium eligibility."
+        )
+
+    # ---------------- Hospitalisations ----------------
+    if ui["prev_hospitalizations"] > 1:
+        reasons.append(
+            f"{ui['prev_hospitalizations']} hospitalisations — utilisation loading"
+        )
+
+    # ---------------- Coverage ----------------
+    if ui["coverage_type"] in ["Premium", "Comprehensive"]:
+        reasons.append(
+            f"{ui['coverage_type']} coverage — broader protection costs more"
+        )
+
+    # ---------------- Healthy Profile ----------------
     if not reasons:
         reasons.append("Healthy profile — no major risk loadings applied")
         reasons.append("Competitive base premium applies")
 
+    # Remove duplicate recommendations
+    recommendations = list(dict.fromkeys(recommendations))
+
     return {
         "reasons": reasons,
-        "recommendations": [
-            "Maintaining a healthy BMI may reduce future premiums",
-            "Quitting smoking can reduce your premium by up to 30%",
-            "Regular exercise qualifies you for wellness discounts",
-            "Annual check-ups help maintain low-risk status",
-        ],
+        "recommendations": recommendations,
     }
 
 

@@ -3,11 +3,13 @@
 # Simple, clean UI — predict on button click only
 # ============================================================
 
+import csv
 import os, sys
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 
 APP_DIR  = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ROOT_DIR = os.path.abspath(os.path.join(APP_DIR, ".."))
@@ -15,7 +17,7 @@ sys.path.insert(0, ROOT_DIR); sys.path.insert(0, APP_DIR)
 
 from utils.helpers import (
     load_models, transform_input, validate_input,
-    generate_fraud_explanation, fraud_badge, fmt_percent,
+    generate_fraud_explanation, fraud_badge, fmt_percent,transform_batch,
 )
 
 
@@ -62,11 +64,206 @@ def show(user_input: dict):
             Fraud costs the industry <b>₹80,000+ Crore annually</b>.
         </p>
     """, unsafe_allow_html=True)
+    tab_single, tab_portfolio = st.tabs([
+        "🧍 Single Claim",
+        "🏢 Portfolio Fraud Analytics"
+    ])
+    with tab_single:
 
-    errors = validate_input(user_input)
-    if errors:
-        for e in errors: st.error(f"❌ {e}")
-        return
+        errors = validate_input(user_input)
+        if errors:
+            for e in errors: st.error(f"❌ {e}")
+            return
+        
+    with tab_portfolio:
+
+        st.subheader("🏢 Portfolio Fraud Analytics")
+
+        st.write(
+            "Upload a CSV containing multiple claims to analyse fraud risk across the portfolio."
+        )
+
+        uploaded_file = st.file_uploader(
+            "Upload Portfolio CSV",
+            type=["csv"],
+            key="portfolio_fraud_csv"
+        )
+
+        if uploaded_file is not None:
+
+            df_upload = pd.read_csv(uploaded_file)
+
+            st.success(f"Loaded {len(df_upload):,} claims.")
+
+            st.dataframe(df_upload.head(), use_container_width=True)
+
+            if st.button(
+                "🚀 Analyse Portfolio",
+                key="portfolio_fraud_btn",
+                type="primary",
+            ):
+
+                models = load_models()
+
+                encoders = models["encoders"]
+
+                X = transform_batch(df_upload, encoders)
+
+                fraud_pred = models["fraud_model"].predict(X)
+
+                fraud_prob = models["fraud_model"].predict_proba(X)[:, 1]
+
+                df_upload["Fraud Prediction"] = np.where(
+                    fraud_pred == 1,
+                    "Fraud",
+                    "Genuine"
+                )
+
+                df_upload["Fraud Probability"] = fraud_prob
+
+                # =====================================
+                # Portfolio Fraud KPIs
+                # =====================================
+
+                total_claims = len(df_upload)
+
+                fraud_count = (df_upload["Fraud Prediction"] == "Fraud").sum()
+
+                genuine_count = total_claims - fraud_count
+
+                fraud_rate = fraud_count / total_claims
+
+                avg_probability = df_upload["Fraud Probability"].mean()
+
+                st.markdown("---")
+
+                st.subheader("📊 Portfolio Fraud Dashboard")
+
+                c1, c2, c3, c4 = st.columns(4)
+
+                c1.metric(
+                    "Total Claims",
+                    f"{total_claims:,}"
+                )
+
+                c2.metric(
+                    "Fraud Alerts",
+                    fraud_count
+                )       
+
+                c3.metric(
+                    "Fraud Rate",
+                    f"{fraud_rate:.1%}"
+                )
+
+                c4.metric(
+                    "Avg Fraud Probability",
+                    f"{avg_probability:.2f}"
+                )
+
+                st.markdown("---")
+
+                st.subheader("🚩 Top Suspicious Claims")
+
+                top20 = (
+                    df_upload
+                    .sort_values(
+                        "Fraud Probability",
+                        ascending=False
+                    )
+                    .head(20)
+                )
+
+                st.dataframe(
+                    top20,
+                    use_container_width=True
+                )
+
+                st.markdown("---")
+
+                st.subheader("📈 Fraud Probability Distribution")
+
+                fig = px.histogram(
+                    df_upload,
+                    x="Fraud Probability",
+                    nbins=20,
+                    title="Distribution of Fraud Probability",
+                    color_discrete_sequence=["#EF4444"]
+                )
+
+                fig.update_layout(
+                    template="plotly_white",
+                    xaxis_title="Fraud Probability",
+                    yaxis_title="Number of Claims"
+                )
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+                st.markdown("---")
+
+                st.subheader("🤖 AI Investigation Summary")
+
+                if fraud_rate >= 0.20:
+                    summary = (
+                        f"This portfolio contains {total_claims:,} claims. "
+                        f"{fraud_count:,} claims ({fraud_rate:.1%}) have been flagged as potentially fraudulent. "
+                        "This fraud rate is significantly above the expected industry benchmark. "
+                        "A detailed investigation of the highest-risk claims is strongly recommended."
+                    )
+
+                elif fraud_rate >= 0.10:
+                    summary = (
+                        f"This portfolio contains {total_claims:,} claims. "
+                        f"{fraud_count:,} claims ({fraud_rate:.1%}) require manual review. "
+                        "The fraud rate is moderately elevated, and targeted verification is recommended."
+                    )
+
+                else:
+                    summary = (
+                        f"This portfolio contains {total_claims:,} claims. "
+                        f"{fraud_count:,} claims ({fraud_rate:.1%}) were flagged. "
+                        "Overall fraud exposure appears to be within acceptable limits. "
+                        "Routine verification of flagged claims is recommended."
+                    )
+
+                st.info(summary)
+
+                st.markdown("---")
+
+                st.subheader("📌 Management Recommendations")
+
+                recommendations = []
+
+                if fraud_rate >= 0.20:
+                    recommendations.append("Increase fraud investigation resources immediately.")
+
+                if fraud_rate >= 0.10:
+                    recommendations.append("Perform manual verification on all flagged claims.")
+
+                if avg_probability >= 0.50:
+                    recommendations.append("Review underwriting rules for high-risk policies.")
+
+                recommendations.append("Investigate the Top 20 suspicious claims first.")
+                recommendations.append("Verify supporting medical documents before settlement.")
+                recommendations.append("Continue monitoring fraud trends monthly.")
+
+                for rec in recommendations:
+                    st.success("✅ " + rec)
+                
+                st.markdown("---")
+
+                csv = df_upload.to_csv(index=False).encode("utf-8")
+
+                st.download_button(
+                    label="📥 Download Fraud Analysis Report",
+                    data=csv,
+                    file_name="fraud_portfolio_report.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
 
     # Input summary
     st.markdown("#### 📋 Claim Profile Being Analysed")
